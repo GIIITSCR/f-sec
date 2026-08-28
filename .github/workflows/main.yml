@@ -1,0 +1,55 @@
+name: F-Secure Register
+
+on:
+  workflow_dispatch:
+    inputs:
+      repeat:
+        description: 'How many accounts to generate'
+        required: true
+        default: '1'
+      email_api:
+        description: 'Email API to use'
+        required: true
+        default: 'mailtm'
+        type: choice
+        options:
+          - mailtm
+          - 1secmail
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install selenium requests webdriver-manager colorama
+
+      - name: Install Google Chrome
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+
+      - name: Run F-Secure Register
+        env:
+          DISPLAY: ':99'
+        run: |
+          python fsecure_register.py --account --email-api ${{ github.event.inputs.email_api }} --repeat ${{ github.event.inputs.repeat }} --disable-logging
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fsecure-accounts
+          path: '*- F-Secure ACCOUNTS.txt'
+          if-no-files-found: warn
