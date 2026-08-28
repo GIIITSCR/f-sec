@@ -194,20 +194,28 @@ AVAILABLE_EMAIL_APIS = tuple(EMAIL_API_CLASSES.keys())
 # ----------------------------------------------------------------------------
 # Confirmation link extraction (F-Secure)
 # ----------------------------------------------------------------------------
-def get_confirmation_link(email_obj, max_attempts: int = 12, delay: int = 5) -> Optional[str]:
+def get_confirmation_link(email_obj, max_attempts: int = 15, delay: int = 6) -> Optional[str]:
+    patterns = [
+        r'href="(https://[^"]*f-secure[^"]*)"',
+        r'(https://[^\s"<>]*f-secure[^\s"<>]*)',
+        r'href="(https://[^"]*token=[^"]*)"',
+        r'(https://[^\s"<>]*token=[^\s"<>]*)',
+        r'href="(https://[^"]*confirm[^"]*)"',
+        r'href="(https://[^"]*verify[^"]*)"',
+    ]
     for attempt in range(max_attempts):
         try:
             console_log(f'Checking mail (attempt {attempt + 1}/{max_attempts})...', INFO)
             messages = email_obj.get_messages()
             for msg in messages:
                 body = str(msg.get('body', ''))
-                match = re.search(r'href="(https://[^"]*f-secure[^"]*)"', body)
-                if not match:
-                    match = re.search(r'(https://[^\s"<>]*f-secure[^\s"<>]*)', body)
-                if match:
-                    link = match.group(1)
-                    console_log(f'Confirmation link found: {link}', OK)
-                    return link
+                for pat in patterns:
+                    match = re.search(pat, body)
+                    if match:
+                        link = match.group(1)
+                        link = link.replace('&amp;', '&')
+                        console_log(f'Confirmation link found: {link}', OK)
+                        return link
             time.sleep(delay)
         except Exception as e:
             console_log(f'Mail check error: {e}', WARN)
@@ -255,11 +263,30 @@ class FsecureRegister:
         raise RuntimeError('Cannot locate registration form frame')
 
     def create_account(self):
-        console_log('Opening registration page...', INFO)
-        self.driver.get('https://my.f-secure.com/register')
+        console_log('Opening login page...', INFO)
+        self.driver.get('https://www.f-secure.com/en/login')
         console_log(f'Current URL: {self.driver.current_url}', INFO)
 
-        # Wait for the form to appear (possibly inside an iframe)
+        # Click the "Create account" button that opens the registration modal
+        try:
+            btn = WebDriverWait(self.driver, 20).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, 'button[aria-label="Create account"]'))
+            )
+        except Exception:
+            btn = None
+            for b in self.driver.find_elements(By.TAG_NAME, 'button'):
+                if b.get_attribute('innerText').strip().lower() in ('create', 'create account', 'sign up', 'register'):
+                    btn = b
+                    break
+        if btn is None:
+            raise RuntimeError('Create account button not found on login page')
+        try:
+            btn.click()
+        except Exception:
+            self.driver.execute_script('arguments[0].click();', btn)
+        console_log('Registration modal opening...', INFO)
+
+        # Wait for the form to appear inside the modal iframe
         form_ready = False
         for _ in range(30):
             try:
@@ -305,7 +332,13 @@ class FsecureRegister:
         self.driver.find_element(By.ID, 'user.password').send_keys(self.password)
 
         console_log('Submitting form...', INFO)
-        self.driver.find_element(By.ID, 'button-continue').click()
+        # Submit the registration form directly (includes hidden csrfToken).
+        # Using form.submit() avoids "element click intercepted" overlay issues.
+        self.driver.execute_script(
+            "var f=document.getElementById('registration-form');"
+            "if(f&&f.requestSubmit){f.requestSubmit();}else if(f){f.submit();}"
+        )
+        time.sleep(3)
         console_log('Form submitted, waiting for confirmation email...', OK)
         return True
 
@@ -315,8 +348,28 @@ class FsecureRegister:
             return False
         console_log('Navigating to confirmation link...', INFO)
         self.driver.get(link)
-        time.sleep(5)
-        console_log('Account successfully confirmed!', OK)
+        time.sleep(8)
+        console_log(f'Confirmation page URL: {self.driver.current_url}', INFO)
+        # Check for a success indicator in the main document or any iframe
+        page_text = ''
+        try:
+            page_text = (self.driver.find_element(By.TAG_NAME, 'body').text or '')
+        except Exception:
+            pass
+        for frame in self.driver.find_elements(By.TAG_NAME, 'iframe'):
+            try:
+                self.driver.switch_to.frame(frame)
+                page_text += '\n' + (self.driver.find_element(By.TAG_NAME, 'body').text or '')
+                self.driver.switch_to.default_content()
+            except Exception:
+                try:
+                    self.driver.switch_to.default_content()
+                except Exception:
+                    pass
+        if any(k in page_text.lower() for k in ['confirm', 'verif', 'success', 'activated', 'welcome']):
+            console_log('Account successfully confirmed!', OK)
+            return True
+        console_log('Confirmation page opened, but success text not detected (continuing).', WARN)
         return True
 
 
