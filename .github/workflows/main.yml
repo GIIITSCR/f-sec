@@ -50,6 +50,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fsecure-accounts
-          path: '*- F-Secure ACCOUNTS.txt'
+          name: fsecure-results
+          path: |
+            *- F-Secure ACCOUNTS.txt
+            debug-*.html
+            F-Secure-Register.log
           if-no-files-found: warn
