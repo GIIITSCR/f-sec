@@ -227,15 +227,66 @@ class FsecureRegister:
         self.last_name = last_name
         self.driver = driver
 
+    def _enter_form_frame(self):
+        """Switch driver context into the frame containing the registration form
+        (the form lives inside a dynamic iframe on my.f-secure.com)."""
+        try:
+            self.driver.switch_to.default_content()
+        except Exception:
+            pass
+        try:
+            self.driver.find_element(By.ID, 'user.firstName')
+            return  # already in main document
+        except Exception:
+            pass
+        for frame in self.driver.find_elements(By.TAG_NAME, 'iframe'):
+            try:
+                self.driver.switch_to.frame(frame)
+                try:
+                    self.driver.find_element(By.ID, 'user.firstName')
+                    return
+                except Exception:
+                    self.driver.switch_to.default_content()
+            except Exception:
+                try:
+                    self.driver.switch_to.default_content()
+                except Exception:
+                    pass
+        raise RuntimeError('Cannot locate registration form frame')
+
     def create_account(self):
         console_log('Opening registration page...', INFO)
         self.driver.get('https://my.f-secure.com/register')
         console_log(f'Current URL: {self.driver.current_url}', INFO)
-        try:
-            WebDriverWait(self.driver, 30).until(
-                EC.presence_of_element_located((By.ID, 'user.firstName'))
-            )
-        except Exception as e:
+
+        # Wait for the form to appear (possibly inside an iframe)
+        form_ready = False
+        for _ in range(30):
+            try:
+                self.driver.switch_to.default_content()
+            except Exception:
+                pass
+            try:
+                self.driver.find_element(By.ID, 'user.firstName')
+                form_ready = True
+                break
+            except Exception:
+                for frame in self.driver.find_elements(By.TAG_NAME, 'iframe'):
+                    try:
+                        self.driver.switch_to.frame(frame)
+                        try:
+                            self.driver.find_element(By.ID, 'user.firstName')
+                            form_ready = True
+                            break
+                        except Exception:
+                            self.driver.switch_to.default_content()
+                    except Exception:
+                        self.driver.switch_to.default_content()
+                if form_ready:
+                    break
+            time.sleep(1)
+
+        if not form_ready:
             dbg = f"debug_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
             try:
                 with open(dbg, 'w', encoding='utf-8') as f:
@@ -244,12 +295,15 @@ class FsecureRegister:
             except Exception:
                 pass
             console_log(f'Registration form not found! URL={self.driver.current_url}', ERROR)
-            raise
+            raise RuntimeError('Registration form not found (incl. iframes)')
+
+        self._enter_form_frame()
         console_log('Filling form...', INFO)
         self.driver.find_element(By.ID, 'user.firstName').send_keys(self.first_name)
         self.driver.find_element(By.ID, 'user.familyName').send_keys(self.last_name)
         self.driver.find_element(By.ID, 'user.email').send_keys(self.email_obj.email)
         self.driver.find_element(By.ID, 'user.password').send_keys(self.password)
+
         console_log('Submitting form...', INFO)
         self.driver.find_element(By.ID, 'button-continue').click()
         console_log('Form submitted, waiting for confirmation email...', OK)
