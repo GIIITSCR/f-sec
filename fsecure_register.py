@@ -230,9 +230,21 @@ class FsecureRegister:
     def create_account(self):
         console_log('Opening registration page...', INFO)
         self.driver.get('https://my.f-secure.com/register')
-        WebDriverWait(self.driver, 15).until(
-            EC.presence_of_element_located((By.ID, 'user.firstName'))
-        )
+        console_log(f'Current URL: {self.driver.current_url}', INFO)
+        try:
+            WebDriverWait(self.driver, 30).until(
+                EC.presence_of_element_located((By.ID, 'user.firstName'))
+            )
+        except Exception as e:
+            dbg = f"debug_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+            try:
+                with open(dbg, 'w', encoding='utf-8') as f:
+                    f.write(self.driver.page_source)
+                console_log(f'Page source saved to {dbg}', WARN)
+            except Exception:
+                pass
+            console_log(f'Registration form not found! URL={self.driver.current_url}', ERROR)
+            raise
         console_log('Filling form...', INFO)
         self.driver.find_element(By.ID, 'user.firstName').send_keys(self.first_name)
         self.driver.find_element(By.ID, 'user.familyName').send_keys(self.last_name)
@@ -259,7 +271,7 @@ class FsecureRegister:
 # ----------------------------------------------------------------------------
 def setup_driver(headless=True) -> webdriver.Chrome:
     options = Options()
-    options.page_load_strategy = 'eager'
+    options.page_load_strategy = 'normal'
     options.add_experimental_option('excludeSwitches', ['enable-logging'])
     options.add_argument('--log-level=3')
     options.add_argument('--lang=en-US')
@@ -267,9 +279,11 @@ def setup_driver(headless=True) -> webdriver.Chrome:
     options.add_experimental_option('excludeSwitches', ['enable-automation'])
     options.add_experimental_option('useAutomationExtension', False)
     if headless:
-        options.add_argument('--headless')
+        options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--disable-gpu')
+    options.add_argument('--window-size=1920,1080')
 
     driver = webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
@@ -376,7 +390,10 @@ def main():
     if successful and not args['disable_output_file']:
         console_log('Data saved to F-Secure ACCOUNTS.txt', OK)
 
-    input(f'\n{INPT} Press Enter to exit...')
+    try:
+        input(f'\n{INPT} Press Enter to exit...')
+    except (EOFError, KeyboardInterrupt):
+        pass
 
 
 if __name__ == '__main__':
